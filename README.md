@@ -25,9 +25,6 @@ UsenetStreamer is a Stremio addon that bridges Prowlarr and NZBDav. It searches 
    node server.js
    ```
 
-4. Add `http(s)://<your-addon-host>/manifest.json` to Stremio.
-
-Place a 256×256 icon at `assets/icon.png` so the manifest advertises a logo.
 
 ## Environment Variables
 
@@ -37,6 +34,26 @@ Place a 256×256 icon at `assets/icon.png` so the manifest advertises a logo.
 
 See `.env.example` for the authoritative list.
 
-## License
+### Choosing an `ADDON_BASE_URL`
 
-This project is distributed under the ISC license (see `package.json`).
+`ADDON_BASE_URL` must be the publicly reachable origin that hosts your addon. Stremio uses it to download the manifest, streams, and the icon (`/assets/icon.png`).
+
+1. **Grab a DuckDNS domain (free):**
+   - Sign in at [https://www.duckdns.org](https://www.duckdns.org) with GitHub/Google/etc.
+   - Choose a subdomain (e.g. `myusenet.duckdns.org`) and note the token DuckDNS gives you.
+   - Point the domain to your server by running their update script (CRON/systemd) so the IP stays current.
+
+2. **Serve the addon on HTTPS:**
+   - Use a reverse proxy such as Nginx, Caddy, or Traefik on your host.
+   - Obtain a certificate:
+     - **Let’s Encrypt** via certbot/lego/Traefik’s built-ins for fully trusted HTTPS.
+     - Or DuckDNS’ ACME helper if you prefer wildcard certificates.
+   - Proxy requests from `https://<your-domain>` to `http://localhost:<addon-port>` and expose `/manifest.json`, `/stream/*`, and `/assets/*`.
+
+3. **Update `.env`:** set `ADDON_BASE_URL=https://myusenet.duckdns.org` and restart the addon so manifests reference the secure URL.
+
+Tips:
+
+- Keep port 7000 (or whichever you use) firewalled; let the reverse proxy handle public traffic.
+- Renew certificates automatically (cron/systemd timer or your proxy’s auto-renew feature).
+- If you deploy behind Cloudflare or another CDN, ensure WebDAV/body sizes are allowed and HTTPS certificates stay valid.
