@@ -55,11 +55,13 @@ If you prefer to keep secrets in a file, use `--env-file /path/to/usenetstreamer
 
 ## Environment Variables
 
-- `PROWLARR_URL`, `PROWLARR_API_KEY`, `PROWLARR_STRICT_ID_MATCH`
+- `PROWLARR_URL`, `PROWLARR_API_KEY`, `PROWLARR_STRICT_ID_MATCH`, `PROWLARR_INDEXER_IDS`
 - `NZBDAV_URL`, `NZBDAV_API_KEY`, `NZBDAV_WEBDAV_URL`, `NZBDAV_WEBDAV_USER`, `NZBDAV_WEBDAV_PASS`
 - `ADDON_BASE_URL`
 
 `PROWLARR_STRICT_ID_MATCH` defaults to `false`. Set it to `true` if you want strictly ID-based searches (IMDb/TVDB/TMDB only). This usually yields faster, more precise matches but many indexers do not support ID queries, so you will receive fewer total results.
+
+`PROWLARR_INDEXER_IDS` accepts a comma-separated list (e.g. `1,3,9`). Leave it empty or use `-1` for “all Usenet indexers,” mirroring Prowlarr’s special ID handling. The addon will log which IDs are used for each request.
 
 See `.env.example` for the authoritative list.
 

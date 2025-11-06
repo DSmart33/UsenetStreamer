@@ -19,6 +19,15 @@ app.use('/assets', express.static(path.join(__dirname, 'assets')));
 const PROWLARR_URL = (process.env.PROWLARR_URL || '').trim();
 const PROWLARR_API_KEY = (process.env.PROWLARR_API_KEY || '').trim();
 const PROWLARR_STRICT_ID_MATCH = (process.env.PROWLARR_STRICT_ID_MATCH || 'false').toLowerCase() === 'true';
+const PROWLARR_INDEXER_IDS = (() => {
+  const raw = (process.env.PROWLARR_INDEXER_IDS || '').trim();
+  if (!raw) return '-1';
+  return raw
+    .split(',')
+    .map((id) => id.trim())
+    .filter((id) => id.length > 0)
+    .join(',') || '-1';
+})();
 
 // Configure NZBDav
 const ADDON_BASE_URL = (process.env.ADDON_BASE_URL || '').trim();
@@ -711,27 +720,6 @@ async function proxyNzbdavStream(req, res, viewPath, fileNameHint = '') {
   }
 }
 
-function isTorrentResult(result) {
-  const protocol = (result.protocol || result.downloadProtocol || '').toLowerCase();
-  if (protocol === 'torrent') {
-    return true;
-  }
-
-  const guid = (result.guid || '').toLowerCase();
-  const downloadUrl = (result.downloadUrl || '').toLowerCase();
-  const link = (result.link || '').toLowerCase();
-
-  if (guid.startsWith('magnet:') || downloadUrl.startsWith('magnet:') || link.startsWith('magnet:')) {
-    return true;
-  }
-
-  if (guid.endsWith('.torrent') || downloadUrl.endsWith('.torrent') || link.endsWith('.torrent')) {
-    return true;
-  }
-
-  return false;
-}
-
 // Manifest endpoint
 app.get('/manifest.json', (req, res) => {
   ensureAddonConfigured();
@@ -1020,8 +1008,9 @@ app.get('/stream/:type/:id.json', async (req, res) => {
     const baseSearchParams = {
       limit: '25',
       offset: '0',
-      indexerIds: '-1'
+      indexerIds: PROWLARR_INDEXER_IDS
     };
+    console.log('[PROWLARR] Using indexerIds', PROWLARR_INDEXER_IDS);
 
     const deriveResultKey = (result) => {
       if (!result) return null;
@@ -1082,7 +1071,7 @@ app.get('/stream/:type/:id.json', async (req, res) => {
         if (!item.downloadUrl) {
           return false;
         }
-        return !isTorrentResult(item);
+        return true;
       });
 
       let addedCount = 0;
