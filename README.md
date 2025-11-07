@@ -59,7 +59,7 @@ If you prefer to keep secrets in a file, use `--env-file /path/to/usenetstreamer
 
 Using NZBHydra instead? Set `INDEXER_MANAGER=nzbhydra`, point `INDEXER_MANAGER_URL` at your Hydra instance, and provide comma-separated indexer names via `INDEXER_MANAGER_INDEXERS` if you want to limit the search scope. Leave `INDEXER_MANAGER_INDEXERS` blank to let Hydra decide.
 
-When `ADDON_SHARED_SECRET` is set, every request must include `?token=${ADDON_SHARED_SECRET}` (e.g. `https://your-domain/manifest.json?token=super-secret-token`). Stream URLs emitted by the addon include the token automatically.
+When `ADDON_SHARED_SECRET` is set, every request must include the token as the first path segment (e.g. `https://your-domain/super-secret-token/manifest.json`). Stream URLs emitted by the addon automatically include the same `/super-secret-token/` prefix.
 
 
 ## Environment Variables
@@ -77,7 +77,7 @@ When `ADDON_SHARED_SECRET` is set, every request must include `?token=${ADDON_SH
 
 `INDEXER_MANAGER_CACHE_MINUTES` (optional) overrides the default NZBHydra cache duration (10 minutes). Leave unset to keep the default. Prowlarr ignores this value.
 
-`ADDON_SHARED_SECRET` locks access behind a shared token. Anyone visiting the manifest or stream endpoints must append `?token=<your-secret>`. Stremio supports this out of the box—just add the manifest URL with the token included.
+`ADDON_SHARED_SECRET` locks access behind a shared token. Anyone visiting the manifest or stream endpoints must prefix the URL with `/<your-secret>/` (e.g. `/super-secret-token/manifest.json`). Stremio supports this out of the box—just add the manifest URL with the token included.
 
 `NZBDAV_CATEGORY` optionally overrides the target NZBDav categories. When set (e.g. `Stremio`), movie jobs are queued to `Stremio_MOVIE`, series to `Stremio_TV`, and everything else to `Stremio_DEFAULT`. Leave unset to keep the per-type categories (`NZBDAV_CATEGORY_MOVIES`, `NZBDAV_CATEGORY_SERIES`, etc.).
 
@@ -107,4 +107,4 @@ Tips:
 - Keep port 7000 (or whichever you use) firewalled; let the reverse proxy handle public traffic.
 - Renew certificates automatically (cron/systemd timer or your proxy’s auto-renew feature).
 - If you deploy behind Cloudflare or another CDN, ensure WebDAV/body sizes are allowed and HTTPS certificates stay valid.
-- Finally, add `https://myusenet.duckdns.org/manifest.json?token=super-secret-token` (replace with your domain + secret) to Stremio’s addon catalog. Use straight HTTPS—the addon will not show up over HTTP.
+- Finally, add `https://myusenet.duckdns.org/super-secret-token/manifest.json` (replace with your domain + secret) to Stremio’s addon catalog. Use straight HTTPS—the addon will not show up over HTTP.

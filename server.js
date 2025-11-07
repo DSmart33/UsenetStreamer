@@ -11,13 +11,18 @@ const path = require('path');
 
 const app = express();
 const port = Number(process.env.PORT || 7000);
+const ADDON_VERSION = '1.2.0';
 
 app.use(cors());
 app.use('/assets', express.static(path.join(__dirname, 'assets')));
 
 function extractTokenFromRequest(req) {
-  if (req.query && typeof req.query.token === 'string') {
-    return req.query.token.trim();
+  const pathMatch = (req.path || '').match(/^\/([^\/]+)\/(manifest\.json|stream|nzb)(?:\b|\/)/i);
+  if (pathMatch && pathMatch[1]) {
+    return pathMatch[1].trim();
+  }
+  if (req.params && typeof req.params.token === 'string') {
+    return req.params.token.trim();
   }
   const authHeader = req.headers['authorization'] || req.headers['x-addon-token'];
   if (typeof authHeader === 'string') {
@@ -102,7 +107,7 @@ const FAILURE_VIDEO_FILENAME = 'failure_video.mp4';
 const FAILURE_VIDEO_PATH = path.resolve(__dirname, 'assets', FAILURE_VIDEO_FILENAME);
 const STREAM_HIGH_WATER_MARK = (() => {
   const parsed = Number(process.env.STREAM_HIGH_WATER_MARK);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1024 * 1024;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 4 * 1024 * 1024;
 })();
 
 const CINEMETA_URL = 'https://v3-cinemeta.strem.io/meta';
@@ -1019,6 +1024,41 @@ async function proxyNzbdavStream(req, res, viewPath, fileNameHint = '') {
     headers.Range = 'bytes=0-0';
   }
 
+  let totalFileSize = null;
+  if (!req.headers.range && !emulateHead) {
+    const headConfig = {
+      url: targetUrl,
+      method: 'HEAD',
+      headers: {
+  'User-Agent': headers['User-Agent'] || `UsenetStreamer/${ADDON_VERSION}`
+      },
+      timeout: 30000,
+      validateStatus: (status) => status < 500
+    };
+
+    if (NZBDAV_WEBDAV_USER && NZBDAV_WEBDAV_PASS) {
+      headConfig.auth = {
+        username: NZBDAV_WEBDAV_USER,
+        password: NZBDAV_WEBDAV_PASS
+      };
+    }
+
+    try {
+      const headResponse = await axios.request(headConfig);
+      const headHeadersLower = Object.keys(headResponse.headers || {}).reduce((map, key) => {
+        map[key.toLowerCase()] = headResponse.headers[key];
+        return map;
+      }, {});
+      const headContentLength = headHeadersLower['content-length'];
+      if (headContentLength) {
+        totalFileSize = Number(headContentLength);
+        console.log(`[NZBDAV] HEAD reported total size ${totalFileSize} bytes for ${normalizedPath}`);
+      }
+    } catch (headError) {
+      console.warn('[NZBDAV] HEAD request failed; continuing without pre-fetched size:', headError.message);
+    }
+  }
+
   const requestConfig = {
     url: targetUrl,
     method: proxiedMethod,
@@ -1094,10 +1134,12 @@ async function proxyNzbdavStream(req, res, viewPath, fileNameHint = '') {
         res.setHeader('X-Total-Length', match[3]);
       }
     }
+  } else if ((!contentLengthHeader || Number(contentLengthHeader) === 0) && Number.isFinite(totalFileSize)) {
+    res.setHeader('Content-Length', String(totalFileSize));
   }
 
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Expose-Headers', 'Content-Length,Content-Range,Content-Type');
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Length,Content-Range,Content-Type,Accept-Ranges');
 
   if (emulateHead || !nzbdavResponse.data || typeof nzbdavResponse.data.pipe !== 'function') {
     if (nzbdavResponse.data && typeof nzbdavResponse.data.destroy === 'function') {
@@ -1120,35 +1162,42 @@ async function proxyNzbdavStream(req, res, viewPath, fileNameHint = '') {
 }
 
 // Manifest endpoint
-app.get('/manifest.json', (req, res) => {
+function manifestHandler(req, res) {
   ensureAddonConfigured();
 
   res.json({
-  id: 'com.usenet.streamer',
-  version: '1.1.0',
-  name: 'UsenetStreamer',
-  description: 'Usenet-powered instant streams for Stremio via Prowlarr/NZBHydra and NZBDav',
-  logo: `${ADDON_BASE_URL.replace(/\/$/, '')}/assets/icon.png`,
+    id: 'com.usenet.streamer',
+    version: ADDON_VERSION,
+    name: 'UsenetStreamer',
+    description: 'Usenet-powered instant streams for Stremio via Prowlarr/NZBHydra and NZBDav',
+    logo: `${ADDON_BASE_URL.replace(/\/$/, '')}/assets/icon.png`,
     resources: ['stream'],
     types: ['movie', 'series', 'channel', 'tv'],
     catalogs: [],
     idPrefixes: ['tt']
   });
-});
+}
 
-app.get('/stream/:type/:id.json', async (req, res) => {
+if (ADDON_SHARED_SECRET) {
+  app.get('/:token/manifest.json', manifestHandler);
+} else {
+  app.get('/manifest.json', manifestHandler);
+  app.get('/:token/manifest.json', manifestHandler);
+}
+
+async function streamHandler(req, res) {
   const { type, id } = req.params;
   console.log(`[REQUEST] Received request for ${type} ID: ${id}`);
 
   const primaryId = id.split(':')[0];
   if (!/^tt\d+$/.test(primaryId)) {
-  res.status(400).json({ error: `Unsupported ID prefix for indexer manager search: ${primaryId}` });
+    res.status(400).json({ error: `Unsupported ID prefix for indexer manager search: ${primaryId}` });
     return;
   }
 
   try {
-  ensureAddonConfigured();
-  ensureIndexerManagerConfigured();
+    ensureAddonConfigured();
+    ensureIndexerManagerConfigured();
     ensureNzbdavConfigured();
 
     const pickFirstDefined = (...values) => values.find((value) => value !== undefined && value !== null && String(value).trim() !== '') || null;
@@ -1546,10 +1595,10 @@ app.get('/stream/:type/:id.json', async (req, res) => {
         baseParams.set('downloadUrl', result.downloadUrl);
   if (result.guid) baseParams.set('guid', result.guid);
   if (result.size) baseParams.set('size', String(result.size));
-  if (result.title) baseParams.set('title', result.title);
-  if (ADDON_SHARED_SECRET) baseParams.set('token', ADDON_SHARED_SECRET);
+    if (result.title) baseParams.set('title', result.title);
 
-        const streamUrl = `${addonBaseUrl}/nzb/stream?${baseParams.toString()}`;
+    const tokenSegment = ADDON_SHARED_SECRET ? `/${ADDON_SHARED_SECRET}` : '';
+    const streamUrl = `${addonBaseUrl}${tokenSegment}/nzb/stream?${baseParams.toString()}`;
         const name = 'UsenetStreamer';
         const behaviorHints = {
           notWebReady: true,
@@ -1592,7 +1641,14 @@ app.get('/stream/:type/:id.json', async (req, res) => {
       }
     });
   }
-});
+}
+
+if (ADDON_SHARED_SECRET) {
+  app.get('/:token/stream/:type/:id.json', streamHandler);
+} else {
+  app.get('/stream/:type/:id.json', streamHandler);
+  app.get('/:token/stream/:type/:id.json', streamHandler);
+}
 
 async function handleNzbdavStream(req, res) {
   const { downloadUrl, type = 'movie', id = '', title = 'NZB Stream' } = req.query;
@@ -1615,21 +1671,21 @@ async function handleNzbdavStream(req, res) {
       buildNzbdavStream({ downloadUrl, category, title, requestedEpisode })
     );
 
-      if ((req.method || 'GET').toUpperCase() === 'HEAD') {
-        const inferredMime = inferMimeType(streamData.fileName || title || 'stream');
-        const totalSize = Number.isFinite(streamData.size) ? streamData.size : undefined;
-        res.setHeader('Accept-Ranges', 'bytes');
-        res.setHeader('Content-Type', inferredMime);
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.setHeader('Access-Control-Expose-Headers', 'Content-Length,Content-Range,Content-Type');
-        res.setHeader('Content-Disposition', `inline; filename="${(streamData.fileName || 'stream').replace(/[\/:*?"<>|]+/g, '_')}"`);
-        if (Number.isFinite(totalSize)) {
-          res.setHeader('Content-Length', String(totalSize));
-          res.setHeader('X-Total-Length', String(totalSize));
-        }
-        res.status(200).end();
-        return;
+    if ((req.method || 'GET').toUpperCase() === 'HEAD') {
+      const inferredMime = inferMimeType(streamData.fileName || title || 'stream');
+      const totalSize = Number.isFinite(streamData.size) ? streamData.size : undefined;
+      res.setHeader('Accept-Ranges', 'bytes');
+      res.setHeader('Content-Type', inferredMime);
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Length,Content-Range,Content-Type,Accept-Ranges');
+      res.setHeader('Content-Disposition', `inline; filename="${(streamData.fileName || 'stream').replace(/[\\/:*?"<>|]+/g, '_')}"`);
+      if (Number.isFinite(totalSize)) {
+        res.setHeader('Content-Length', String(totalSize));
+        res.setHeader('X-Total-Length', String(totalSize));
       }
+      res.status(200).end();
+      return;
+    }
 
     await proxyNzbdavStream(req, res, streamData.viewPath, streamData.fileName || '');
   } catch (error) {
@@ -1654,8 +1710,15 @@ async function handleNzbdavStream(req, res) {
   }
 }
 
-app.get('/nzb/stream', handleNzbdavStream);
-app.head('/nzb/stream', handleNzbdavStream);
+if (ADDON_SHARED_SECRET) {
+  app.get('/:token/nzb/stream', handleNzbdavStream);
+  app.head('/:token/nzb/stream', handleNzbdavStream);
+} else {
+  app.get('/:token/nzb/stream', handleNzbdavStream);
+  app.head('/:token/nzb/stream', handleNzbdavStream);
+  app.get('/nzb/stream', handleNzbdavStream);
+  app.head('/nzb/stream', handleNzbdavStream);
+}
 
 app.listen(port, '0.0.0.0', () => {
   console.log(`Addon running at http://0.0.0.0:${port}`);
