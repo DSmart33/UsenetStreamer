@@ -94,6 +94,10 @@ const NZBDAV_CATEGORY_DEFAULT = process.env.NZBDAV_CATEGORY_DEFAULT || 'Movies';
 const NZBDAV_CATEGORY_OVERRIDE = (process.env.NZBDAV_CATEGORY || '').trim();
 const NZBDAV_POLL_INTERVAL_MS = 2000;
 const NZBDAV_POLL_TIMEOUT_MS = 80000;
+const NZBDAV_HISTORY_FETCH_LIMIT = (() => {
+  const raw = Number(process.env.NZBDAV_HISTORY_FETCH_LIMIT);
+  return Number.isFinite(raw) && raw > 0 ? Math.min(raw, 500) : 200;
+})();
 const NZBDAV_CACHE_TTL_MINUTES = (() => {
   const raw = Number(process.env.NZBDAV_CACHE_TTL_MINUTES);
   if (Number.isFinite(raw) && raw > 0) {
@@ -696,6 +700,82 @@ function inferMimeType(fileName) {
   return VIDEO_MIME_MAP.get(ext) || 'application/octet-stream';
 }
 
+function normalizeReleaseTitle(title) {
+  if (!title) return '';
+  return title.toString().trim().toLowerCase();
+}
+
+async function fetchCompletedNzbdavHistory(categories = []) {
+  ensureNzbdavConfigured();
+  const categoryList = Array.isArray(categories) && categories.length > 0
+    ? Array.from(new Set(categories.filter((value) => value !== undefined && value !== null && String(value).trim() !== '')))
+    : [null];
+
+  const results = new Map();
+
+  for (const category of categoryList) {
+    try {
+      const params = buildNzbdavApiParams('history', {
+        start: '0',
+        limit: String(NZBDAV_HISTORY_FETCH_LIMIT),
+        category: category || undefined
+      });
+
+      const headers = {};
+      if (NZBDAV_API_KEY) {
+        headers['x-api-key'] = NZBDAV_API_KEY;
+      }
+
+      const response = await axios.get(`${NZBDAV_URL}/api`, {
+        params,
+        timeout: NZBDAV_HISTORY_TIMEOUT_MS,
+        headers,
+        validateStatus: (status) => status < 500
+      });
+
+      if (!response.data?.status) {
+        const errorMessage = response.data?.error || `history returned status ${response.status}`;
+        throw new Error(errorMessage);
+      }
+
+      const history = response.data?.history || response.data?.History;
+      const slots = history?.slots || history?.Slots || [];
+
+      for (const slot of slots) {
+        const status = (slot?.status || slot?.Status || '').toString().toLowerCase();
+        if (status !== 'completed') {
+          continue;
+        }
+
+        const jobName = slot?.job_name || slot?.JobName || slot?.name || slot?.Name || slot?.nzb_name || slot?.NzbName;
+        const nzoId = slot?.nzo_id || slot?.nzoId || slot?.NzoId;
+        if (!jobName || !nzoId) {
+          continue;
+        }
+
+        const normalized = normalizeReleaseTitle(jobName);
+        if (!normalized) {
+          continue;
+        }
+
+        if (!results.has(normalized)) {
+          results.set(normalized, {
+            nzoId,
+            jobName,
+            category: slot?.category || slot?.Category || category || null,
+            size: slot?.size || slot?.Size || null,
+            slot
+          });
+        }
+      }
+    } catch (error) {
+      console.warn(`[NZBDAV] Failed to fetch history for category ${category || 'all'}: ${error.message}`);
+    }
+  }
+
+  return results;
+}
+
 function buildNzbdavCacheKey(downloadUrl, category, requestedEpisode = null) {
   const keyParts = [downloadUrl, category];
   if (requestedEpisode && Number.isFinite(requestedEpisode.season) && Number.isFinite(requestedEpisode.episode)) {
@@ -941,45 +1021,89 @@ async function getOrCreateNzbdavStream(cacheKey, builder) {
   }
 }
 
-async function buildNzbdavStream({ downloadUrl, category, title, requestedEpisode }) {
-  try {
-    const { nzoId } = await addNzbToNzbdav(downloadUrl, category, title);
-    const slot = await waitForNzbdavHistorySlot(nzoId, category);
-    const slotCategory = slot?.category || slot?.Category || category;
-    const slotJobName = slot?.job_name || slot?.JobName || slot?.name || slot?.Name;
-
-    if (!slotJobName) {
-      throw new Error('[NZBDAV] Unable to determine job name from history');
-    }
-
-    const bestFile = await findBestVideoFile({
-      category: slotCategory,
-      jobName: slotJobName,
-      requestedEpisode
-    });
-
-    if (!bestFile) {
-      throw new Error('[NZBDAV] No playable video files found after mounting NZB');
-    }
-
-    console.log(`[NZBDAV] Selected file ${bestFile.viewPath} (${bestFile.size} bytes)`);
-
-    return {
-      nzoId,
-      category: slotCategory,
-      jobName: slotJobName,
-      viewPath: bestFile.viewPath,
-      size: bestFile.size,
-      fileName: bestFile.name
-    };
-  } catch (error) {
-    if (error?.isNzbdavFailure) {
-      error.downloadUrl = downloadUrl;
-      error.category = category;
-      error.title = title;
-    }
-    throw error;
+async function buildNzbdavStream({ downloadUrl, category, title, requestedEpisode, existingSlot = null }) {
+  let reuseError = null;
+  const attempts = [];
+  if (existingSlot?.nzoId) {
+    attempts.push('reuse');
   }
+  attempts.push('queue');
+
+  for (const mode of attempts) {
+    try {
+      let slot = null;
+      let nzoId = null;
+      let slotCategory = category;
+      let slotJobName = title;
+
+      if (mode === 'reuse') {
+        const reuseCategory = existingSlot?.category || category;
+        slot = await waitForNzbdavHistorySlot(existingSlot.nzoId, reuseCategory);
+        nzoId = existingSlot.nzoId;
+        slotCategory = slot?.category || slot?.Category || reuseCategory;
+        slotJobName = slot?.job_name || slot?.JobName || slot?.name || slot?.Name || existingSlot?.jobName || title;
+        console.log(`[NZBDAV] Reusing completed NZB ${slotJobName} (${nzoId})`);
+      } else {
+        const added = await addNzbToNzbdav(downloadUrl, category, title);
+        nzoId = added.nzoId;
+        slot = await waitForNzbdavHistorySlot(nzoId, category);
+        slotCategory = slot?.category || slot?.Category || category;
+        slotJobName = slot?.job_name || slot?.JobName || slot?.name || slot?.Name || title;
+      }
+
+      if (!slotJobName) {
+        throw new Error('[NZBDAV] Unable to determine job name from history');
+      }
+
+      const bestFile = await findBestVideoFile({
+        category: slotCategory,
+        jobName: slotJobName,
+        requestedEpisode
+      });
+
+      if (!bestFile) {
+        throw new Error('[NZBDAV] No playable video files found after mounting NZB');
+      }
+
+      console.log(`[NZBDAV] Selected file ${bestFile.viewPath} (${bestFile.size} bytes)`);
+
+      return {
+        nzoId,
+        category: slotCategory,
+        jobName: slotJobName,
+        viewPath: bestFile.viewPath,
+        size: bestFile.size,
+        fileName: bestFile.name
+      };
+    } catch (error) {
+      if (mode === 'reuse') {
+        reuseError = error;
+        console.warn(`[NZBDAV] Reuse attempt failed for NZB ${existingSlot?.nzoId || 'unknown'}: ${error.message}`);
+        continue;
+      }
+      if (error?.isNzbdavFailure) {
+        error.downloadUrl = downloadUrl;
+        error.category = category;
+        error.title = title;
+      }
+      throw error;
+    }
+  }
+
+  if (reuseError) {
+    if (reuseError?.isNzbdavFailure) {
+      reuseError.downloadUrl = downloadUrl;
+      reuseError.category = category;
+      reuseError.title = title;
+    }
+    throw reuseError;
+  }
+
+  const fallbackError = new Error('[NZBDAV] Unable to prepare NZB stream');
+  fallbackError.downloadUrl = downloadUrl;
+  fallbackError.category = category;
+  fallbackError.title = title;
+  throw fallbackError;
 }
 
 async function proxyNzbdavStream(req, res, viewPath, fileNameHint = '') {
@@ -1595,10 +1719,20 @@ async function streamHandler(req, res) {
 
   console.log(`${INDEXER_LOG_PREFIX} Final NZB selection: ${finalNzbResults.length} results`);
 
-    const addonBaseUrl = ADDON_BASE_URL.replace(/\/$/, '');
     cleanupNzbdavCache();
 
     const categoryForType = getNzbdavCategory(type);
+    let historyByTitle = new Map();
+    try {
+      historyByTitle = await fetchCompletedNzbdavHistory([categoryForType]);
+      if (historyByTitle.size > 0) {
+        console.log(`[NZBDAV] Loaded ${historyByTitle.size} completed NZBs for instant playback detection (category=${categoryForType})`);
+      }
+    } catch (historyError) {
+      console.warn(`[NZBDAV] Unable to load NZBDav history for instant detection: ${historyError.message}`);
+    }
+
+    const addonBaseUrl = ADDON_BASE_URL.replace(/\/$/, '');
 
     const streams = finalNzbResults
       .sort((a, b) => (b.size || 0) - (a.size || 0))
@@ -1622,7 +1756,20 @@ async function streamHandler(req, res) {
 
         const cacheKey = buildNzbdavCacheKey(result.downloadUrl, categoryForType, requestedEpisode);
         const cacheEntry = nzbdavStreamCache.get(cacheKey);
-        const isInstant = cacheEntry?.status === 'ready';
+        const normalizedTitle = normalizeReleaseTitle(result.title);
+        const historySlot = normalizedTitle ? historyByTitle.get(normalizedTitle) : null;
+        const isInstant = cacheEntry?.status === 'ready' || Boolean(historySlot);
+
+        if (historySlot?.nzoId) {
+          baseParams.set('historyNzoId', historySlot.nzoId);
+          if (historySlot.jobName) {
+            baseParams.set('historyJobName', historySlot.jobName);
+          }
+          if (historySlot.category) {
+            baseParams.set('historyCategory', historySlot.category);
+          }
+        }
+
         const tokenSegment = ADDON_SHARED_SECRET ? `/${ADDON_SHARED_SECRET}` : '';
         const streamUrl = `${addonBaseUrl}${tokenSegment}/nzb/stream?${baseParams.toString()}`;
         const tags = ['📰 NZB'];
@@ -1640,6 +1787,9 @@ async function streamHandler(req, res) {
 
         if (isInstant) {
           behaviorHints.cached = true;
+          if (historySlot) {
+            behaviorHints.cachedFromHistory = true;
+          }
         }
 
         return {
@@ -1654,7 +1804,9 @@ async function streamHandler(req, res) {
             quality,
             age: result.age,
             type: 'nzb',
-            cached: Boolean(isInstant)
+            cached: Boolean(isInstant),
+            cachedFromHistory: Boolean(historySlot),
+            cachedFromSession: cacheEntry?.status === 'ready'
           }
         };
       })
@@ -1702,9 +1854,16 @@ async function handleNzbdavStream(req, res) {
     const category = getNzbdavCategory(type);
     const requestedEpisode = parseRequestedEpisode(type, id, req.query || {});
     const cacheKey = buildNzbdavCacheKey(downloadUrl, category, requestedEpisode);
+    const existingSlotHint = req.query.historyNzoId
+      ? {
+          nzoId: req.query.historyNzoId,
+          jobName: req.query.historyJobName,
+          category: req.query.historyCategory
+        }
+      : null;
 
     const streamData = await getOrCreateNzbdavStream(cacheKey, () =>
-      buildNzbdavStream({ downloadUrl, category, title, requestedEpisode })
+      buildNzbdavStream({ downloadUrl, category, title, requestedEpisode, existingSlot: existingSlotHint })
     );
 
     if ((req.method || 'GET').toUpperCase() === 'HEAD') {

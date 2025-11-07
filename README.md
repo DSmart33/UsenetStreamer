@@ -69,6 +69,7 @@ When `ADDON_SHARED_SECRET` is set, every request must include the token as the f
 - `NZBDAV_URL`, `NZBDAV_API_KEY`, `NZBDAV_WEBDAV_URL`, `NZBDAV_WEBDAV_USER`, `NZBDAV_WEBDAV_PASS`
 - `ADDON_BASE_URL`, `ADDON_SHARED_SECRET`
 - `NZBDAV_CATEGORY`
+- `NZBDAV_HISTORY_FETCH_LIMIT`, `NZBDAV_CACHE_TTL_MINUTES`
 - `NZBDAV_CACHE_TTL_MINUTES`
 
 `INDEXER_MANAGER` defaults to `prowlarr`. Set it to `nzbhydra` to target an NZBHydra instance.
@@ -83,7 +84,7 @@ When `ADDON_SHARED_SECRET` is set, every request must include the token as the f
 
 `NZBDAV_CATEGORY` optionally overrides the target NZBDav categories. When set (e.g. `Stremio`), movie jobs are queued to `Stremio_MOVIE`, series to `Stremio_TV`, and everything else to `Stremio_DEFAULT`. Leave unset to keep the per-type categories (`NZBDAV_CATEGORY_MOVIES`, `NZBDAV_CATEGORY_SERIES`, etc.).
 
-`NZBDAV_CACHE_TTL_MINUTES` controls how long stream metadata stays cached in memory (default 1440 minutes = 24 hours). Set to `0` to disable expiration entirely if you want previously mounted NZBs to remain marked as ⚡ Instant until the process restarts.
+`NZBDAV_HISTORY_FETCH_LIMIT` controls how many completed NZB history entries we scan when looking for instant playback matches (default 200, capped at 500). `NZBDAV_CACHE_TTL_MINUTES` controls how long stream metadata stays cached in memory (default 1440 minutes = 24 hours). Set `NZBDAV_CACHE_TTL_MINUTES=0` to disable expiration entirely if you want previously mounted NZBs to remain marked as ⚡ Instant until the process restarts.
 
 See `.env.example` for the authoritative list.
 
