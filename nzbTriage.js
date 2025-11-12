@@ -12,7 +12,7 @@ const DEFAULT_OPTIONS = {
   archiveDirs: [],
   nntpConfig: null,
   statTimeoutMs: 8000,
-  fetchTimeoutMs: 15000,
+  fetchTimeoutMs: 20000,
   maxDecodedBytes: 16 * 1024,
   nntpMaxConnections: 60,
   reuseNntpPool: true,

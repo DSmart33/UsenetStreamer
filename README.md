@@ -44,36 +44,43 @@ UsenetStreamer is a Stremio addon that bridges a Usenet indexer manager (Prowlar
 
 ### Docker Usage
 
-The image is published to the GitHub Container Registry. Pull it and run with your environment variables:
+Quick start:
 
 ```bash
-docker pull ghcr.io/sanket9225/usenetstreamer:latest
-
-docker run -d \
+docker run -d --restart unless-stopped \
    --name usenetstreamer \
    -p 7000:7000 \
-   -e INDEXER_MANAGER=prowlarr \
-   -e INDEXER_MANAGER_URL=https://your-prowlarr-host:9696 \
-   -e INDEXER_MANAGER_API_KEY=your-prowlarr-api-key \
-   -e INDEXER_MANAGER_INDEXERS=-1 \
    -e ADDON_SHARED_SECRET=super-secret-token \
-   -e NZBDAV_URL=http://localhost:3000 \
-   -e NZBDAV_API_KEY=your-nzbdav-api-key \
-   -e NZBDAV_WEBDAV_URL=http://localhost:3000 \
-   -e NZBDAV_WEBDAV_USER=webdav-username \
-   -e NZBDAV_WEBDAV_PASS=webdav-password \
-   -e NZBDAV_CATEGORY=Stremio \
-   -e ADDON_BASE_URL=https://myusenet.duckdns.org \
-   ghcr.io/sanket9225/usenetstreamer:latest
+   ghcr.io/sanket9225/usenetstreamer:dev
 ```
 
-If you prefer to keep secrets in a file, use `--env-file /path/to/usenetstreamer.env` instead of specifying `-e` flags.
+That launches the current development build, exposes the addon on port `7000`, and locks the manifest behind `/super-secret-token/…`. Add additional `-e` flags (or switch to `--env-file`) to provide your indexer, NZBDav, and NNTP credentials. Substitute the `:dev` tag with a specific version once you’re ready for production.
 
-> Need a custom build? Clone this repo, adjust the code, then run `docker build -t usenetstreamer .` to create your own image.
+Need a custom image? Clone this repo, adjust the code, then run `docker build -t usenetstreamer .`.
 
-Using NZBHydra instead? Set `INDEXER_MANAGER=nzbhydra`, point `INDEXER_MANAGER_URL` at your Hydra instance, and provide comma-separated indexer names via `INDEXER_MANAGER_INDEXERS` if you want to limit the search scope. Leave `INDEXER_MANAGER_INDEXERS` blank to let Hydra decide.
+`ADDON_SHARED_SECRET` is a user-defined token or passphrase; pick any string you like (letters, digits, symbols). When it is set, every request must include the token as the first path segment (e.g. `https://your-domain/super-secret-token/manifest.json`). Stream URLs emitted by the addon automatically include the same `/super-secret-token/` prefix.
 
-When `ADDON_SHARED_SECRET` is set, every request must include the token as the first path segment (e.g. `https://your-domain/super-secret-token/manifest.json`). Stream URLs emitted by the addon automatically include the same `/super-secret-token/` prefix.
+
+### Admin Dashboard
+
+Visit `https://your-addon-domain/<token>/admin/` (or `http://localhost:7000/<token>/admin/` during local testing) to manage the addon without touching `.env` files. The dashboard lets you:
+
+- Load and edit all runtime settings, then persist them with **Save & Restart**.
+- Test connections for the indexer manager, NZBDav, and Usenet provider before you commit changes.
+- See the freshly generated manifest URL immediately after saving and copy it with one click.
+
+The dashboard is guarded by the same shared secret that protects your manifest. Anyone with the token can reach it, so keep the token private.
+
+
+### NNTP Health Check (Experimental)
+
+Development builds (`ghcr.io/sanket9225/usenetstreamer:dev`) ship with an NNTP-backed NZB triage pipeline. Enable it by setting:
+
+- `NZB_TRIAGE_ENABLED=true`
+- Your NNTP host, port, and credentials (`NZB_TRIAGE_NNTP_HOST`, `NZB_TRIAGE_NNTP_USER`, `NZB_TRIAGE_NNTP_PASS`, etc.)
+- Optional tuning knobs such as `NZB_TRIAGE_MAX_CANDIDATES`, `NZB_TRIAGE_STAT_TIMEOUT_MS`, and `NZB_TRIAGE_REUSE_POOL`
+
+When active, the addon downloads a small batch of candidate NZBs, samples their archive headers over NNTP, and prioritises releases that look healthy. The feature is still under active development, so expect defaults to shift between dev builds.
 
 
 ## Environment Variables
