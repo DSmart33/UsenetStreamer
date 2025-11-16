@@ -64,6 +64,77 @@
         </section>
 
         <section class="group">
+          <h3>Result Sorting &amp; Filters</h3>
+          <div class="field-grid">
+            <label>Sorting Mode
+              <select name="NZB_SORT_MODE">
+                <option value="quality_then_size">Quality → Size</option>
+                <option value="language_quality_size">Preferred Language → Quality → Size</option>
+              </select>
+              <span class="field-hint">Choose how releases are prioritized before NZB health checks run.</span>
+            </label>
+            <label>Preferred Language
+              <select name="NZB_PREFERRED_LANGUAGE" data-sorting-language>
+                <option value="">No preference</option>
+                <option value="English">English</option>
+                <option value="Tamil">Tamil</option>
+                <option value="Hindi">Hindi</option>
+                <option value="Malayalam">Malayalam</option>
+                <option value="Kannada">Kannada</option>
+                <option value="Telugu">Telugu</option>
+                <option value="Chinese">Chinese</option>
+                <option value="Russian">Russian</option>
+                <option value="Arabic">Arabic</option>
+                <option value="Japanese">Japanese</option>
+                <option value="Korean">Korean</option>
+                <option value="Taiwanese">Taiwanese</option>
+                <option value="Latino">Latino</option>
+                <option value="French">French</option>
+                <option value="Spanish">Spanish</option>
+                <option value="Portuguese">Portuguese</option>
+                <option value="Italian">Italian</option>
+                <option value="German">German</option>
+                <option value="Ukrainian">Ukrainian</option>
+                <option value="Polish">Polish</option>
+                <option value="Czech">Czech</option>
+                <option value="Thai">Thai</option>
+                <option value="Indonesian">Indonesian</option>
+                <option value="Vietnamese">Vietnamese</option>
+                <option value="Dutch">Dutch</option>
+                <option value="Bengali">Bengali</option>
+                <option value="Turkish">Turkish</option>
+                <option value="Greek">Greek</option>
+                <option value="Swedish">Swedish</option>
+                <option value="Romanian">Romanian</option>
+                <option value="Hungarian">Hungarian</option>
+                <option value="Finnish">Finnish</option>
+                <option value="Norwegian">Norwegian</option>
+                <option value="Danish">Danish</option>
+                <option value="Hebrew">Hebrew</option>
+                <option value="Lithuanian">Lithuanian</option>
+                <option value="Punjabi">Punjabi</option>
+                <option value="Marathi">Marathi</option>
+                <option value="Gujarati">Gujarati</option>
+                <option value="Bhojpuri">Bhojpuri</option>
+                <option value="Nepali">Nepali</option>
+                <option value="Urdu">Urdu</option>
+                <option value="Tagalog">Tagalog</option>
+                <option value="Filipino">Filipino</option>
+                <option value="Malay">Malay</option>
+                <option value="Mongolian">Mongolian</option>
+                <option value="Armenian">Armenian</option>
+                <option value="Georgian">Georgian</option>
+              </select>
+              <span class="field-hint">Required only when using the language-first sorting mode.</span>
+            </label>
+            <label>Max File Size (GB)
+              <input name="NZB_MAX_RESULT_SIZE_GB" type="number" min="0" step="0.1" placeholder="30" />
+              <span class="field-hint">Defaults to 30 GB. Set 0 for no cap; larger releases are skipped before health checks.</span>
+            </label>
+          </div>
+        </section>
+
+        <section class="group">
           <h3>NZBDav Connection</h3>
           <div class="field-grid">
             <label>NZBDav URL
@@ -120,9 +191,6 @@
             <label>Usenet Provider Password
               <input name="NZB_TRIAGE_NNTP_PASS" type="password" autocomplete="new-password" data-health-required="true" />
             </label>
-            <label>Preferred Size (GB)
-              <input name="NZB_TRIAGE_PREFERRED_SIZE_GB" type="number" min="0" step="0.1" placeholder="20" data-health-required="true" />
-            </label>
             <label>Number of NZBs to Inspect
               <select name="NZB_TRIAGE_MAX_CANDIDATES" data-health-required="true">
                 <option value="2">2</option>
@@ -133,7 +201,7 @@
             </label>
             <label>Max Usenet Connections
               <input name="NZB_TRIAGE_MAX_CONNECTIONS" type="number" min="1" step="1" data-health-required="true" />
-              <span class="field-hint">Should not exceed twice the number set in “Number of NZBs to Inspect”.</span>
+              <span class="field-hint">Keep this ≤ 2 × “Number of NZBs to Inspect”, and ensure the combined total of these connections plus any NZBDav connections stays within your provider’s max.</span>
             </label>
           </div>
           <div class="inline-actions">

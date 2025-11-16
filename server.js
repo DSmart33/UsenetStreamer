@@ -21,6 +21,7 @@ const {
   getPublishMetadataFromResult,
   areReleasesWithinDays,
 } = require('./publishInfo');
+const { parseReleaseMetadata, LANGUAGE_FILTERS, LANGUAGE_SYNONYMS } = require('./releaseMetadata');
 
 runtimeEnv.applyRuntimeEnv();
 
@@ -37,6 +38,9 @@ const adminStatic = express.static(path.join(__dirname, 'admin'));
 
 adminApiRouter.get('/config', (req, res) => {
   const values = collectConfigValues(ADMIN_CONFIG_KEYS);
+  if (!values.NZB_MAX_RESULT_SIZE_GB) {
+    values.NZB_MAX_RESULT_SIZE_GB = String(DEFAULT_MAX_RESULT_SIZE_GB);
+  }
   res.json({
     values,
     manifestUrl: computeManifestUrl(),
@@ -253,6 +257,129 @@ function parsePathList(value) {
     .map((segment) => (path.isAbsolute(segment) ? segment : path.resolve(process.cwd(), segment)));
 }
 
+const SORT_MODE_OPTIONS = new Set(['quality_then_size', 'language_quality_size']);
+
+const LANGUAGE_PREFERENCE_ALIASES = {
+  en: 'English',
+  'en-us': 'English',
+  'en-gb': 'English',
+  'en-au': 'English',
+  ta: 'Tamil',
+  hi: 'Hindi',
+  'hi-in': 'Hindi',
+  ml: 'Malayalam',
+  kn: 'Kannada',
+  te: 'Telugu',
+  mr: 'Marathi',
+  gu: 'Gujarati',
+  pa: 'Punjabi',
+  bn: 'Bengali',
+  ne: 'Nepali',
+  ur: 'Urdu',
+  tl: 'Tagalog',
+  fil: 'Filipino',
+  ms: 'Malay',
+  zh: 'Chinese',
+  'zh-cn': 'Chinese',
+  'zh-hans': 'Chinese',
+  'zh-hant': 'Taiwanese',
+  'zh-tw': 'Taiwanese',
+  ja: 'Japanese',
+  ko: 'Korean',
+  de: 'German',
+  'de-de': 'German',
+  fr: 'French',
+  it: 'Italian',
+  es: 'Spanish',
+  'es-es': 'Spanish',
+  'es-419': 'Latino',
+  'es-mx': 'Latino',
+  'es-ar': 'Latino',
+  pt: 'Portuguese',
+  'pt-br': 'Portuguese',
+  'pt-pt': 'Portuguese',
+  ru: 'Russian',
+  uk: 'Ukrainian',
+  pl: 'Polish',
+  cs: 'Czech',
+  tr: 'Turkish',
+  el: 'Greek',
+  nl: 'Dutch',
+  sv: 'Swedish',
+  no: 'Norwegian',
+  nb: 'Norwegian',
+  nn: 'Norwegian',
+  da: 'Danish',
+  fi: 'Finnish',
+  ro: 'Romanian',
+  hu: 'Hungarian',
+  th: 'Thai',
+  id: 'Indonesian',
+  vi: 'Vietnamese',
+  ar: 'Arabic',
+  he: 'Hebrew',
+  iw: 'Hebrew',
+  lt: 'Lithuanian',
+  mn: 'Mongolian',
+  hy: 'Armenian',
+  ka: 'Georgian',
+  'la': 'Latino',
+};
+
+const LANGUAGE_ALIAS_MAP = (() => {
+  const map = new Map();
+  LANGUAGE_FILTERS.forEach((language) => {
+    if (!language) return;
+    map.set(language.toLowerCase(), language);
+  });
+  if (LANGUAGE_SYNONYMS) {
+    Object.entries(LANGUAGE_SYNONYMS).forEach(([language, tokens]) => {
+      if (!language || !Array.isArray(tokens)) return;
+      tokens.forEach((token) => {
+        if (!token) return;
+        map.set(token.toLowerCase(), language);
+      });
+    });
+  }
+  Object.entries(LANGUAGE_PREFERENCE_ALIASES).forEach(([alias, language]) => {
+    if (!language) return;
+    map.set(alias.toLowerCase(), language);
+  });
+  return map;
+})();
+
+const DEFAULT_MAX_RESULT_SIZE_GB = 30;
+
+function normalizeSortMode(value, fallback = 'quality_then_size') {
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (SORT_MODE_OPTIONS.has(normalized)) {
+      return normalized;
+    }
+  }
+  return fallback;
+}
+
+function resolvePreferredLanguage(value, fallback = '') {
+  if (!value) return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return fallback;
+  const direct = LANGUAGE_ALIAS_MAP.get(normalized);
+  if (direct) return direct;
+  if (normalized.includes('-')) {
+    const short = normalized.split('-')[0];
+    const shortMatch = LANGUAGE_ALIAS_MAP.get(short);
+    if (shortMatch) return shortMatch;
+  }
+  return fallback;
+}
+
+function toSizeBytesFromGb(value) {
+  const numeric = toFiniteNumber(value, null);
+  if (!Number.isFinite(numeric) || numeric <= 0) return null;
+  return numeric * 1024 * 1024 * 1024;
+}
+
 function collectConfigValues(keys) {
   const values = {};
   keys.forEach((key) => {
@@ -281,14 +408,17 @@ function buildTriageNntpConfig() {
   };
 }
 
+const INDEXER_SORT_MODE = normalizeSortMode(process.env.NZB_SORT_MODE, 'quality_then_size');
+const INDEXER_PREFERRED_LANGUAGE = resolvePreferredLanguage(process.env.NZB_PREFERRED_LANGUAGE, '');
+const INDEXER_MAX_RESULT_SIZE_BYTES = toSizeBytesFromGb(
+  process.env.NZB_MAX_RESULT_SIZE_GB && process.env.NZB_MAX_RESULT_SIZE_GB !== ''
+    ? process.env.NZB_MAX_RESULT_SIZE_GB
+    : DEFAULT_MAX_RESULT_SIZE_GB
+);
 const TRIAGE_ENABLED = toBoolean(process.env.NZB_TRIAGE_ENABLED, false);
 const TRIAGE_TIME_BUDGET_MS = toPositiveInt(process.env.NZB_TRIAGE_TIME_BUDGET_MS, 35000);
 const TRIAGE_MAX_CANDIDATES = toPositiveInt(process.env.NZB_TRIAGE_MAX_CANDIDATES, 25);
 const TRIAGE_DOWNLOAD_CONCURRENCY = toPositiveInt(process.env.NZB_TRIAGE_DOWNLOAD_CONCURRENCY, 8);
-const TRIAGE_PREFERRED_SIZE_GB = toFiniteNumber(process.env.NZB_TRIAGE_PREFERRED_SIZE_GB, null);
-const TRIAGE_PREFERRED_SIZE_BYTES = Number.isFinite(TRIAGE_PREFERRED_SIZE_GB) && TRIAGE_PREFERRED_SIZE_GB > 0
-  ? TRIAGE_PREFERRED_SIZE_GB * 1024 * 1024 * 1024
-  : null;
 const TRIAGE_PRIORITY_INDEXERS = parseCommaList(process.env.NZB_TRIAGE_PRIORITY_INDEXERS);
 const TRIAGE_HEALTH_INDEXERS = parseCommaList(process.env.NZB_TRIAGE_HEALTH_INDEXERS);
 const TRIAGE_SERIALIZED_INDEXERS = parseCommaList(process.env.NZB_TRIAGE_SERIALIZED_INDEXERS);
@@ -339,6 +469,9 @@ const ADMIN_CONFIG_KEYS = [
   'INDEXER_MANAGER_STRICT_ID_MATCH',
   'INDEXER_MANAGER_INDEXERS',
   'INDEXER_MANAGER_CACHE_MINUTES',
+  'NZB_SORT_MODE',
+  'NZB_PREFERRED_LANGUAGE',
+  'NZB_MAX_RESULT_SIZE_GB',
   'NZBDAV_URL',
   'NZBDAV_API_KEY',
   'NZBDAV_WEBDAV_URL',
@@ -354,7 +487,6 @@ const ADMIN_CONFIG_KEYS = [
   'NZB_TRIAGE_ENABLED',
   'NZB_TRIAGE_TIME_BUDGET_MS',
   'NZB_TRIAGE_MAX_CANDIDATES',
-  'NZB_TRIAGE_PREFERRED_SIZE_GB',
   'NZB_TRIAGE_PRIORITY_INDEXERS',
   'NZB_TRIAGE_SERIALIZED_INDEXERS',
   'NZB_TRIAGE_DOWNLOAD_CONCURRENCY',
@@ -375,16 +507,25 @@ const ADMIN_CONFIG_KEYS = [
 
 function extractTriageOverrides(query) {
   if (!query || typeof query !== 'object') return {};
-  const sizeCandidate = query.triageSizeGb ?? query.triage_size_gb ?? query.preferredSizeGb;
+  const sizeCandidate = query.maxSizeGb ?? query.max_size_gb ?? query.triageSizeGb ?? query.triage_size_gb ?? query.preferredSizeGb;
   const sizeGb = toFiniteNumber(sizeCandidate, null);
-  const sizeBytes = Number.isFinite(sizeGb) && sizeGb > 0 ? sizeGb * 1024 * 1024 * 1024 : null;
+  const maxSizeBytes = Number.isFinite(sizeGb) && sizeGb > 0 ? sizeGb * 1024 * 1024 * 1024 : null;
   let indexerSource = null;
   if (typeof query.triageIndexerIds === 'string') indexerSource = query.triageIndexerIds;
   else if (Array.isArray(query.triageIndexerIds)) indexerSource = query.triageIndexerIds.join(',');
   const indexers = indexerSource ? parseCommaList(indexerSource) : null;
   const disabled = query.triageDisabled !== undefined ? toBoolean(query.triageDisabled, true) : null;
   const enabled = query.triageEnabled !== undefined ? toBoolean(query.triageEnabled, false) : null;
-  return { sizeBytes, indexers, disabled, enabled };
+  const sortMode = typeof query.sortMode === 'string' ? query.sortMode : query.nzbSortMode;
+  const preferredLanguage = query.preferredLanguage ?? query.language ?? query.lang;
+  return {
+    maxSizeBytes,
+    indexers,
+    disabled,
+    enabled,
+    sortMode: typeof sortMode === 'string' ? sortMode : null,
+    preferredLanguage: typeof preferredLanguage === 'string' ? preferredLanguage : null,
+  };
 }
 
 const OBFUSCATED_SPECIAL_PROVIDER_URL = 'aHR0cHM6Ly9kaXJ0eS1waW5rLmVycy5wdw==';
@@ -680,6 +821,94 @@ function restoreFinalNzbResults(serialized) {
   return serialized
     .filter((entry) => entry && entry.downloadUrl)
     .map((entry) => ({ ...entry }));
+}
+
+function annotateNzbResult(result, sortIndex = 0) {
+  if (!result || typeof result !== 'object') return null;
+  const release = parseReleaseMetadata(result.title || '');
+  const normalizedTitle = normalizeReleaseTitle(result.title) || result.normalizedTitle || result.downloadUrl;
+  return {
+    ...result,
+    normalizedTitle,
+    release: {
+      resolution: release.resolution || null,
+      qualityLabel: release.qualityLabel || null,
+      qualityScore: release.qualityScore || 0,
+      languages: Array.isArray(release.languages) ? release.languages : [],
+    },
+    _sortIndex: sortIndex,
+  };
+}
+
+function applyMaxSizeFilter(results, maxSizeBytes) {
+  if (!Number.isFinite(maxSizeBytes) || maxSizeBytes <= 0) {
+    return results.slice();
+  }
+  return results.filter((result) => {
+    const size = Number(result?.size);
+    return !Number.isFinite(size) || size <= maxSizeBytes;
+  });
+}
+
+function resultMatchesPreferredLanguage(result, preferredLanguage) {
+  if (!preferredLanguage) return false;
+  let languages = Array.isArray(result?.release?.languages) ? result.release.languages : [];
+  if (!languages.length && result?.title) {
+    const fallback = parseReleaseMetadata(result.title);
+    if (fallback?.languages?.length) {
+      languages = fallback.languages;
+      result.release = Object.assign({}, result.release, {
+        languages: fallback.languages,
+        resolution: result.release?.resolution || fallback.resolution || null,
+        qualityLabel: result.release?.qualityLabel || fallback.qualityLabel || null,
+        qualityScore: Number.isFinite(result.release?.qualityScore)
+          ? result.release.qualityScore
+          : fallback.qualityScore,
+      });
+    }
+  }
+  if (!languages.length) return false;
+  return languages.some((language) => language && language.toLowerCase() === preferredLanguage.toLowerCase());
+}
+
+function compareQualityThenSize(a, b) {
+  const qualityDiff = (b?.release?.qualityScore || 0) - (a?.release?.qualityScore || 0);
+  if (qualityDiff !== 0) return qualityDiff;
+  const sizeDiff = (Number(b?.size) || 0) - (Number(a?.size) || 0);
+  if (sizeDiff !== 0) return sizeDiff;
+  const dateDiff = (b?.publishDateMs || 0) - (a?.publishDateMs || 0);
+  if (dateDiff !== 0) return dateDiff;
+  return (a?._sortIndex || 0) - (b?._sortIndex || 0);
+}
+
+function sortAnnotatedResults(results, sortMode, preferredLanguage) {
+  const activeMode = normalizeSortMode(sortMode, INDEXER_SORT_MODE);
+  const activeLanguage = resolvePreferredLanguage(preferredLanguage, INDEXER_PREFERRED_LANGUAGE);
+  const working = results.slice();
+  if (activeMode === 'language_quality_size' && activeLanguage) {
+    const preferredBucket = [];
+    const secondaryBucket = [];
+    working.forEach((result) => {
+      if (resultMatchesPreferredLanguage(result, activeLanguage)) {
+        preferredBucket.push(result);
+      } else {
+        secondaryBucket.push(result);
+      }
+    });
+    preferredBucket.sort(compareQualityThenSize);
+    secondaryBucket.sort(compareQualityThenSize);
+    return preferredBucket.concat(secondaryBucket);
+  }
+  return working.sort(compareQualityThenSize);
+}
+
+function prepareSortedResults(results, options = {}) {
+  if (!Array.isArray(results) || results.length === 0) return [];
+  const annotated = results
+    .map((result, index) => annotateNzbResult(result, index))
+    .filter(Boolean);
+  const filtered = applyMaxSizeFilter(annotated, options.maxSizeBytes ?? INDEXER_MAX_RESULT_SIZE_BYTES);
+  return sortAnnotatedResults(filtered, options.sortMode, options.preferredLanguage);
 }
 
 function restoreTriageDecisions(snapshot) {
@@ -1529,35 +1758,19 @@ function buildTriageTitleMap(decisions) {
   return titleMap;
 }
 
-function prioritizeTriageCandidates(results, preferredSizeBytes, maxCandidates) {
+function prioritizeTriageCandidates(results, maxCandidates) {
   if (!Array.isArray(results) || results.length === 0) return [];
-  const buckets = new Map();
-  results.forEach((result, index) => {
-    if (!result) return;
-    const normalizedTitle = normalizeReleaseTitle(result.title) || result.downloadUrl;
-    const size = Number.isFinite(Number(result.size)) ? Number(result.size) : null;
-    const sizeDiff = Number.isFinite(preferredSizeBytes) && Number.isFinite(size)
-      ? Math.abs(size - preferredSizeBytes)
-      : Number.isFinite(size)
-        ? 0
-        : Number.MAX_SAFE_INTEGER;
-    const current = buckets.get(normalizedTitle);
-    if (!current || sizeDiff < current.sizeDiff) {
-      buckets.set(normalizedTitle, {
-        result,
-        sizeDiff,
-        index
-      });
-    }
-  });
-
-  return Array.from(buckets.values())
-    .sort((a, b) => {
-      if (a.sizeDiff !== b.sizeDiff) return a.sizeDiff - b.sizeDiff;
-      return a.index - b.index;
-    })
-    .slice(0, Math.max(1, maxCandidates))
-    .map((entry) => entry.result);
+  const seenTitles = new Set();
+  const selected = [];
+  for (const result of results) {
+    if (!result) continue;
+    const normalizedTitle = result.normalizedTitle || normalizeReleaseTitle(result.title) || result.downloadUrl;
+    if (seenTitles.has(normalizedTitle)) continue;
+    seenTitles.add(normalizedTitle);
+    selected.push(result);
+    if (selected.length >= Math.max(1, maxCandidates)) break;
+  }
+  return selected;
 }
 
 async function fetchCompletedNzbdavHistory(categories = []) {
@@ -2279,18 +2492,26 @@ async function streamHandler(req, res) {
     if (streamCacheKey) {
       cachedStreamEntry = getStreamCacheEntry(streamCacheKey);
       if (cachedStreamEntry) {
-        if (!cachedStreamEntry.meta || cachedStreamEntry.meta.triageComplete) {
-          console.log('[CACHE] Stream cache hit', { type, id, triageComplete: cachedStreamEntry.meta?.triageComplete !== false });
+        const cacheMeta = cachedStreamEntry.meta;
+        if (cacheMeta?.version === 1 && Array.isArray(cacheMeta.finalNzbResults)) {
+          cachedSearchMeta = cacheMeta;
+          if (cacheMeta.triageComplete) {
+            console.log('[CACHE] Stream cache hit (rehydrating finalized results)', {
+              type,
+              id,
+              cachedStreams: cachedStreamEntry.payload?.streams?.length || 0,
+            });
+          } else {
+            console.log('[CACHE] Reusing cached search results for pending triage', {
+              type,
+              id,
+              pending: cacheMeta.triagePendingDownloadUrls?.length || 0,
+            });
+          }
+        } else if (!cacheMeta || cacheMeta.triageComplete) {
+          console.log('[CACHE] Stream cache hit (legacy payload)', { type, id });
           res.json(cachedStreamEntry.payload);
           return;
-        }
-        if (cachedStreamEntry.meta?.version === 1 && Array.isArray(cachedStreamEntry.meta.finalNzbResults)) {
-          cachedSearchMeta = cachedStreamEntry.meta;
-          console.log('[CACHE] Reusing cached search results for pending triage', {
-            type,
-            id,
-            pending: cachedSearchMeta.triagePendingDownloadUrls?.length || 0,
-          });
         } else {
           console.log('[CACHE] Entry missing usable metadata; ignoring context');
         }
@@ -2718,15 +2939,17 @@ async function streamHandler(req, res) {
           }
           return true;
         })
-        .map((result) => {
-          const annotated = annotateNzbResult(result);
-          return { ...annotated, _sourceType: 'nzb' };
-        });
+        .map((result) => ({ ...result, _sourceType: 'nzb' }));
 
   console.log(`${INDEXER_LOG_PREFIX} Final NZB selection: ${finalNzbResults.length} results`);
     }
 
     const triageOverrides = extractTriageOverrides(req.query || {});
+    finalNzbResults = prepareSortedResults(finalNzbResults, {
+      sortMode: triageOverrides.sortMode,
+      preferredLanguage: triageOverrides.preferredLanguage,
+      maxSizeBytes: triageOverrides.maxSizeBytes,
+    });
     const allowedCacheStatuses = new Set(['verified', 'blocked']);
     const requestedDisable = triageOverrides.disabled === true;
     const requestedEnable = triageOverrides.enabled === true;
@@ -2740,13 +2963,11 @@ async function streamHandler(req, res) {
       ? TRIAGE_SERIALIZED_INDEXERS
       : healthIndexerTokens;
     const healthIndexerSet = new Set((healthIndexerTokens || []).map((token) => normalizeIndexerToken(token)).filter(Boolean));
-    const preferredSizeBytes = triageOverrides.sizeBytes ?? TRIAGE_PREFERRED_SIZE_BYTES;
     const triagePool = healthIndexerSet.size > 0
       ? finalNzbResults.filter((result) => nzbMatchesIndexer(result, healthIndexerSet))
       : [];
     const triageEligibleResults = prioritizeTriageCandidates(
       triagePool,
-      preferredSizeBytes,
       TRIAGE_MAX_CANDIDATES
     );
     const candidateHasConclusiveDecision = (candidate) => {
@@ -2783,7 +3004,6 @@ async function streamHandler(req, res) {
         };
         const triageOptions = {
           allowedIndexerIds: healthIndexerTokens,
-          preferredSizeBytes,
           preferredIndexerIds: healthIndexerTokens, // Use same indexers for filtering and ranking
           serializedIndexerIds: serializedIndexerTokens,
           timeBudgetMs: TRIAGE_TIME_BUDGET_MS,
@@ -2903,14 +3123,22 @@ async function streamHandler(req, res) {
 
     let triageLogCount = 0;
     let triageLogSuppressed = false;
+    const activePreferredLanguage = resolvePreferredLanguage(triageOverrides.preferredLanguage, INDEXER_PREFERRED_LANGUAGE);
 
-    const decoratedStreams = finalNzbResults
-      .map((result) => {
+    const instantStreams = [];
+    const regularStreams = [];
+
+    finalNzbResults.forEach((result) => {
         const sizeInGB = result.size ? (result.size / 1073741824).toFixed(2) : null;
         const sizeString = sizeInGB ? `${sizeInGB} GB` : 'Size Unknown';
-
+        const releaseInfo = result.release || {};
+        const releaseLanguages = Array.isArray(releaseInfo.languages) ? releaseInfo.languages : [];
         const qualityMatch = result.title?.match(/(2160p|4K|UHD|1080p|720p|480p)/i);
-        const quality = qualityMatch ? qualityMatch[0] : '';
+        const quality = releaseInfo.resolution || (qualityMatch ? qualityMatch[0] : '') || releaseInfo.qualityLabel || '';
+        const languageLabel = releaseLanguages.length > 0 ? releaseLanguages.join(', ') : null;
+        const preferredLanguageHit = activePreferredLanguage
+          ? resultMatchesPreferredLanguage(result, activePreferredLanguage)
+          : false;
 
         const baseParams = new URLSearchParams({
           indexerId: String(result.indexerId),
@@ -3008,7 +3236,9 @@ async function streamHandler(req, res) {
         const tags = [];
         if (triageTag) tags.push(triageTag);
         if (isInstant) tags.push('⚡ Instant');
+        if (preferredLanguageHit && activePreferredLanguage) tags.push(`${activePreferredLanguage}`);
         if (quality) tags.push(quality);
+        if (languageLabel) tags.push(`🌐 ${languageLabel}`);
         if (sizeString) tags.push(sizeString);
         const name = 'UsenetStreamer';
         const behaviorHints = {
@@ -3062,7 +3292,11 @@ async function streamHandler(req, res) {
             type: 'nzb',
             cached: Boolean(isInstant),
             cachedFromHistory: Boolean(historySlot),
-            cachedFromSession: cacheEntry?.status === 'ready'
+            cachedFromSession: cacheEntry?.status === 'ready',
+            languages: releaseLanguages,
+            resolution: releaseInfo.resolution || null,
+            preferredLanguageMatch: preferredLanguageHit,
+            preferredLanguageName: preferredLanguageHit ? activePreferredLanguage : null,
           }
         };
         if (triageTag || triageInfo || triageOutcome?.timedOut || !triageApplied) {
@@ -3089,17 +3323,14 @@ async function streamHandler(req, res) {
           }
         }
 
-        return {
-          stream,
-          triagePriority,
-          size: result.size || 0,
-        };
-      })
-      .filter(Boolean);
+        if (isInstant) {
+          instantStreams.push(stream);
+        } else {
+          regularStreams.push(stream);
+        }
+      });
 
-    const streams = decoratedStreams
-      .sort((a, b) => (b.size || 0) - (a.size || 0))
-      .map((entry) => entry.stream);
+    const streams = instantStreams.concat(regularStreams);
 
     const instantCount = streams.filter((stream) => stream?.meta?.cached).length;
     if (instantCount > 0) {

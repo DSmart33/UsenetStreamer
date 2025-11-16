@@ -164,6 +164,7 @@
       const data = await apiRequest('/admin/api/config');
       populateForm(data.values || {});
       syncHealthControls();
+      syncSortingControls();
       configSection.classList.remove('hidden');
       updateManifestLink(data.manifestUrl || '');
       runtimeEnvPath = data.runtimeEnvPath || null;
@@ -276,6 +277,16 @@
     enforceConnectionLimit();
   }
 
+  function syncSortingControls() {
+    if (!sortingModeSelect || !preferredLanguageSelect) return;
+    const requiresLanguage = sortingModeSelect.value === 'language_quality_size';
+    if (requiresLanguage) {
+      preferredLanguageSelect.setAttribute('required', 'required');
+    } else {
+      preferredLanguageSelect.removeAttribute('required');
+    }
+  }
+
   async function saveConfiguration(event) {
     event.preventDefault();
     saveStatus.textContent = '';
@@ -316,6 +327,8 @@
   configForm.addEventListener('submit', saveConfiguration);
 
   const testButtons = configForm.querySelectorAll('button[data-test]');
+  const sortingModeSelect = configForm.querySelector('select[name="NZB_SORT_MODE"]');
+  const preferredLanguageSelect = configForm.querySelector('select[name="NZB_PREFERRED_LANGUAGE"]');
   testButtons.forEach((button) => {
     button.addEventListener('click', () => runConnectionTest(button));
   });
@@ -335,6 +348,9 @@
   if (triageConnectionsInput) {
     triageConnectionsInput.addEventListener('input', enforceConnectionLimit);
   }
+  if (sortingModeSelect) {
+    sortingModeSelect.addEventListener('change', syncSortingControls);
+  }
 
   const pathToken = extractTokenFromPath();
   if (pathToken) {
@@ -348,4 +364,5 @@
     }
   }
   syncHealthControls();
+  syncSortingControls();
 })();
