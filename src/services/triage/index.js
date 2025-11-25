@@ -12,7 +12,7 @@ const ARCHIVE_EXTENSIONS = new Set(['.rar', '.r00', '.r01', '.r02', '.7z']);
 const RAR4_SIGNATURE = Buffer.from([0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x00]);
 const RAR5_SIGNATURE = Buffer.from([0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x01, 0x00]);
 
-const TRIAGE_ACTIVITY_TTL_MS = 60 * 60 * 1000; // 1 hour window for keep-alives
+const TRIAGE_ACTIVITY_TTL_MS = 5 * 60 * 1000; // 1 hour window for keep-alives
 let lastTriageActivityTs = 0;
 
 const DEFAULT_OPTIONS = {

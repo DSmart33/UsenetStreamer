@@ -41,7 +41,7 @@ const specialMetadata = require('./src/services/specialMetadata');
 
 const app = express();
 let currentPort = Number(process.env.PORT || 7000);
-const ADDON_VERSION = '1.4.2';
+const ADDON_VERSION = '1.4.3';
 const DEFAULT_ADDON_NAME = 'UsenetStreamer';
 let serverInstance = null;
 const SERVER_HOST = '0.0.0.0';
