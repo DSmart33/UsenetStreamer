@@ -1467,6 +1467,12 @@ async function streamHandler(req, res) {
         tmdbMetadata = await tmdbMetadataPromise;
         console.log(`[TMDB] TMDb metadata fetch completed in ${Date.now() - tmdbWaitStartTs} ms`);
         if (tmdbMetadata) {
+          if (!releaseYear && tmdbMetadata.year) {
+            const tmdbYear = extractYear(tmdbMetadata.year);
+            if (tmdbYear) {
+              releaseYear = tmdbYear;
+            }
+          }
           // Create a metadata object compatible with existing code
           metaSources.push({
             imdb_id: incomingImdbId,
@@ -1714,7 +1720,21 @@ async function streamHandler(req, res) {
         });
         
         const filteredResults = combinedResults.filter((item) => item && typeof item === 'object' && item.downloadUrl);
-        rawAggregatedResults.push(...filteredResults);
+        filteredResults.forEach((item) => rawAggregatedResults.push({ result: item, planType: plan.type }));
+
+        if (filteredResults.length > 0) {
+          if (usingStrictIdMatching) {
+            aggregatedResults.push(...filteredResults.map((item) => ({ result: item, planType: plan.type })));
+          } else if (resultsByKey) {
+            for (const item of filteredResults) {
+              const key = deriveResultKey(item);
+              if (!key) continue;
+              if (!resultsByKey.has(key)) {
+                resultsByKey.set(key, { result: item, planType: plan.type });
+              }
+            }
+          }
+        }
         
         planSummaries.push({
           planType: plan.type,
